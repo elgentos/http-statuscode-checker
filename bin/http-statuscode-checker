@@ -1,0 +1,13 @@
+#!/usr/bin/env php
+<?php
+
+require_once __DIR__.'/../vendor/autoload.php';
+
+use Elgentos\HttpStatuscodeChecker\Console\CheckCommand;
+use Symfony\Component\Console\Application;
+
+$application = new Application(CheckCommand::LOGO, CheckCommand::VERSION);
+
+$application->add(new CheckCommand);
+
+$application->run();

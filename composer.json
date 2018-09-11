@@ -1,0 +1,24 @@
+{
+  "name": "elgentos/http-statuscode-checker",
+  "description": "Quickly check HTTP status codes",
+  "require": {
+    "php": "^7.1.3",
+    "symfony/console": "^4.1",
+    "league/csv": "^9.0",
+    "guzzlehttp/guzzle": "~6.0"
+  },
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Peter Jaap Blaakmeer",
+      "email": "peterjaap@elgentos.nl"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Elgentos\\": "src/Elgentos"
+    }
+  },
+  "bin": ["bin/hsc"],
+  "minimum-stability": "stable"
+}
