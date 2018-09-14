@@ -2,6 +2,7 @@
 
 namespace Elgentos\HttpStatuscodeChecker\Console;
 
+use GuzzleHttp\Exception\TooManyRedirectsException;
 use League\Csv\Writer;
 use SplTempFileObject;
 use Symfony\Component\Console\Command\Command;
@@ -223,7 +224,11 @@ class CheckCommand extends Command
         );
         $rows = [];
         foreach ($urls as $url) {
-            $statusCode = $this->getStatusCode($client, $url);
+            try {
+                $statusCode = $this->getStatusCode($client, $url);
+            } catch (TooManyRedirectsException $e) {
+                $statusCode = 'Redirect loop';
+            }
             $row = [$url, $statusCode];
             $this->table->appendRow($row);
             $rows[] = $row;
