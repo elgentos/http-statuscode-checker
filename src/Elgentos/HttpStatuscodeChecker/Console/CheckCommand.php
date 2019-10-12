@@ -269,5 +269,4 @@ class CheckCommand extends Command
         $csv->insertOne(['url', 'status_code']);
         $csv->insertAll($output);
     }
-
 }
