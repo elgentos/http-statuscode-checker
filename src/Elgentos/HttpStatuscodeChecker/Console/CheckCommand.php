@@ -184,7 +184,8 @@ class CheckCommand extends Command
      */
     private function checkForStatusCodes(array $urls): array
     {
-        $client = new Client([
+        $client = new Client(
+            [
                 'http_errors' => false,
                 'delay' => $this->getDelay()]
         );
