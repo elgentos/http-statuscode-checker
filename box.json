@@ -1,10 +1,6 @@
 {
     "alias": "http-statuscode-checker.phar",
     "chmod": "0755",
-    "compactors": [
-        "Herrera\\Box\\Compactor\\Json",
-        "Herrera\\Box\\Compactor\\Php"
-    ],
     "compression": "GZ",
     "directories": [
         "src"
@@ -23,6 +19,5 @@
         }
     ],
     "main": "bin/http-statuscode-checker",
-    "output": "dist/http-statuscode-checker.phar",
-    "stub": true
+    "output": "dist/http-statuscode-checker.phar"
 }
