@@ -89,11 +89,11 @@ class CheckCommand extends Command
     /**
      * @param InputInterface $input
      * @param OutputInterface $output
-     * @return int|null|void
+     * @return int
      * @throws \GuzzleHttp\Exception\GuzzleException
      * @throws \League\Csv\Exception
      */
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->input = $input;
         $this->output = $output;
@@ -103,7 +103,7 @@ class CheckCommand extends Command
 
         if (!$input->getArgument('file')) {
             $output->writeln('<error>No filename has been given.</error>');
-            return;
+            return 1;
         }
 
         $file = $input->getArgument('file');
@@ -136,6 +136,8 @@ class CheckCommand extends Command
         }
 
         $this->output->writeln('Done.');
+
+        return 0;
     }
 
     /**
