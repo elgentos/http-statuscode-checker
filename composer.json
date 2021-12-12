@@ -5,7 +5,8 @@
     "php": "^8",
     "symfony/console": "^6.0",
     "league/csv": "^9.7",
-    "guzzlehttp/guzzle": "^7.4"
+    "guzzlehttp/guzzle": "^7.4",
+    "elgentos/parser": "^3.0"
   },
   "license": "MIT",
   "authors": [

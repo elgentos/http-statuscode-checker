@@ -2,6 +2,7 @@
 
 namespace Elgentos\HttpStatuscodeChecker\Console;
 
+use Elgentos\Parser;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
 use League\Csv\CannotInsertRecord;
@@ -32,7 +33,7 @@ class CheckCommand extends Command
     protected OutputInterface $output;
     protected string $name = 'check';
     protected string $description = 'Run checker on a list of URLs';
-    protected array $supportedFileTypes = ['csv'];
+    protected array $supportedFileTypes = ['csv', 'xml'];
     protected int $defaultDelay = 500;
     protected bool $trackRedirects;
     protected Table $table;
@@ -74,10 +75,10 @@ class CheckCommand extends Command
 
         $fileType = $this->checkFileType($file);
 
-        $urls = [];
-        if ($fileType === 'csv') {
-            $urls = $this->getUrlsFromCsv($file);
-        }
+        $urls = match($fileType) {
+            'csv' => $this->getUrlsFromCsv($file),
+            'xml' => $this->getUrlsFromXml($file),
+        };
 
         $this->output->writeln(sprintf('<info>Validating %s URLs...</info>', count($urls)));
 
@@ -143,6 +144,18 @@ class CheckCommand extends Command
             if (isset($record[$urlHeader])) {
                 $urls[] = $record[$urlHeader];
             }
+        }
+
+        return $urls;
+    }
+
+    private function getUrlsFromXml(mixed $file): array
+    {
+        $data = Parser::readSimple($file);
+
+        $urls = [];
+        foreach ($data['url'] as $url) {
+            $urls[] = $url['loc'];
         }
 
         return $urls;
