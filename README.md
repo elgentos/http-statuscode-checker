@@ -21,6 +21,7 @@ Options:
   -b, --base-uri=BASE-URI          Set the base URI to be prepended for relative URLs
   -d, --delay=DELAY                Delay between requests [default: 500]
   -f, --file-output[=FILE-OUTPUT]  Write output to CSV file
+  -t, --track-redirects             Flag to track intermediate 301/302 status codes in output too
  
 ```
 

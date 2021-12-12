@@ -2,9 +2,12 @@
 
 namespace Elgentos\HttpStatuscodeChecker\Console;
 
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
+use League\Csv\CannotInsertRecord;
+use League\Csv\Exception;
 use League\Csv\Writer;
-use SplTempFileObject;
+use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -15,7 +18,7 @@ use GuzzleHttp\Client;
 
 class CheckCommand extends Command
 {
-    const LOGO = '                              
+    public const LOGO = '                              
     __    __  __                   __        __                            __                __              __            
    / /_  / /_/ /_____        _____/ /_____ _/ /___  ________________  ____/ /__        _____/ /_  ___  _____/ /_____  _____
   / __ \/ __/ __/ __ \______/ ___/ __/ __ `/ __/ / / / ___/ ___/ __ \/ __  / _ \______/ ___/ __ \/ _ \/ ___/ //_/ _ \/ ___/
@@ -24,57 +27,17 @@ class CheckCommand extends Command
              /_/                                                                                                           
                    by elgentos';
 
-    const VERSION = '0.1.0';
+    public const VERSION = '0.1.0';
+    protected InputInterface $input;
+    protected OutputInterface $output;
+    protected string $name = 'check';
+    protected string $description = 'Run checker on a list of URLs';
+    protected array $supportedFileTypes = ['csv'];
+    protected int $defaultDelay = 500;
+    protected bool $trackRedirects;
+    protected Table $table;
 
-    protected $config;
-
-    /**
-     * @var InputInterface
-     */
-    protected $input;
-
-    /**
-     * @var OutputInterface
-     */
-    protected $output;
-
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $name = 'check';
-
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Run checker on a list of URLs';
-
-    /**
-     * Supported file types
-     *
-     * @var array
-     */
-    protected $supportedFileTypes = ['csv'];
-
-    /**
-     * Default delay between Guzzle requests in ms
-     *
-     * @var int
-     */
-    protected $defaultDelay = 500;
-
-    /**
-     * @var
-     */
-    protected $table;
-
-    /**
-     *
-     */
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName($this->name)
@@ -83,15 +46,14 @@ class CheckCommand extends Command
             ->addOption('base-uri', 'b', InputOption::VALUE_REQUIRED, 'Set the base URI to be prepended for relative URLs')
             ->addOption('delay', 'd', InputOption::VALUE_REQUIRED, 'Delay between requests', 500)
             ->addOption('file-output', 'f', InputOption::VALUE_OPTIONAL, 'Write output to CSV file')
+            ->addOption('track-redirects', 't', InputOption::VALUE_NONE, 'Flag to track intermediate 301/302 status codes in output too')
             ->addArgument('file', InputOption::VALUE_REQUIRED, 'Filename to parse for URLs');
     }
 
     /**
-     * @param InputInterface $input
-     * @param OutputInterface $output
-     * @return int
-     * @throws \GuzzleHttp\Exception\GuzzleException
-     * @throws \League\Csv\Exception
+     * @throws GuzzleException
+     * @throws Exception
+     * @throws \Exception
      */
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
@@ -99,19 +61,21 @@ class CheckCommand extends Command
         $this->output = $output;
 
         $this->output->writeln(self::LOGO);
-        $this->output->writeln('                        v' . self::VERSION);
+        $this->output->writeln('v' . self::VERSION);
 
         if (!$input->getArgument('file')) {
             $output->writeln('<error>No filename has been given.</error>');
             return 1;
         }
 
+        $this->trackRedirects = $input->getOption('track-redirects');
+
         $file = $input->getArgument('file');
 
         $fileType = $this->checkFileType($file);
 
         $urls = [];
-        if ($fileType == 'csv') {
+        if ($fileType === 'csv') {
             $urls = $this->getUrlsFromCsv($file);
         }
 
@@ -130,9 +94,9 @@ class CheckCommand extends Command
         $this->table->setHeaders(['URL', 'Status Code']);
         $this->table->render();
 
-        $output = $this->checkForStatusCodes($urls);
+        $statusCodeResults = $this->checkForStatusCodes($urls);
         if ($this->input->getOption('file-output')) {
-            $this->writeOutputToFile($output, $this->input->getOption('file-output'));
+            $this->writeOutputToFile($statusCodeResults, $this->input->getOption('file-output'));
         }
 
         $this->output->writeln('Done.');
@@ -141,11 +105,11 @@ class CheckCommand extends Command
     }
 
     /**
-     * @param $file
+     * @param string $file
      * @return string
      * @throws \Exception
      */
-    private function checkFileType($file) : string
+    private function checkFileType(string $file): string
     {
         if (!file_exists($file)) {
             throw new \Exception(sprintf('Filename %s does not exist.', $file));
@@ -153,7 +117,7 @@ class CheckCommand extends Command
 
         $extension = substr($file, -4);
         foreach ($this->supportedFileTypes as $supportedFileType) {
-            if ($extension == '.' . $supportedFileType) {
+            if ($extension === '.' . $supportedFileType) {
                 return $supportedFileType;
             }
         }
@@ -162,13 +126,13 @@ class CheckCommand extends Command
     }
 
     /**
-     * @param $file
+     * @param string $file
      * @return array
-     * @throws \League\Csv\Exception
+     * @throws Exception
      */
-    private function getUrlsFromCsv($file) : array
+    private function getUrlsFromCsv(string $file): array
     {
-        $csv = Reader::createFromPath($file, 'r');
+        $csv = Reader::createFromPath($file);
         $csv->setHeaderOffset(0);
 
         $urlHeader = $this->input->getOption('url-header');
@@ -185,19 +149,19 @@ class CheckCommand extends Command
     }
 
     /**
-     * @param $url
+     * @param string $url
      * @return string
      */
-    private function prependBaseUri($url) : string
+    private function prependBaseUri(string $url): string
     {
         return $this->input->getOption('base-uri') . $url;
     }
 
     /**
-     * @param $url
+     * @param string $url
      * @return bool
      */
-    private function validateUrl($url) : bool
+    private function validateUrl(string $url): bool
     {
         $validated = filter_var($url, FILTER_VALIDATE_URL);
 
@@ -206,7 +170,7 @@ class CheckCommand extends Command
         }
 
         $scheme = parse_url($url, PHP_URL_SCHEME);
-        if (!in_array($scheme, ['http','https'])) {
+        if (!in_array($scheme, ['http', 'https'])) {
             return false;
         }
 
@@ -216,18 +180,23 @@ class CheckCommand extends Command
     /**
      * @param array $urls
      * @return array
-     * @throws \GuzzleHttp\Exception\GuzzleException
+     * @throws GuzzleException
      */
-    private function checkForStatusCodes(array $urls) : array
+    private function checkForStatusCodes(array $urls): array
     {
         $client = new Client([
-            'http_errors' => false,
-            'delay' => $this->getDelay()]
+                'http_errors' => false,
+                'delay' => $this->getDelay()]
         );
         $rows = [];
         foreach ($urls as $url) {
             try {
-                $statusCode = $this->getStatusCode($client, $url);
+                $response = $this->getResponse($client, $url);
+                $statusCode = $response->getStatusCode();
+                foreach ($response->getHeader('X-Guzzle-Redirect-History') as $index => $redirectHistoryUrl) {
+                    $redirectHistoryStatusCode = $response->getHeader('X-Guzzle-Redirect-Status-History')[$index];
+                    $this->table->appendRow([$redirectHistoryUrl, $redirectHistoryStatusCode]);
+                }
             } catch (TooManyRedirectsException $e) {
                 $statusCode = 'Redirect loop';
             }
@@ -242,33 +211,36 @@ class CheckCommand extends Command
     /**
      * @param Client $client
      * @param string $url
-     * @return int
-     * @throws \GuzzleHttp\Exception\GuzzleException
+     * @return ResponseInterface
+     * @throws GuzzleException
      */
-    private function getStatusCode(Client $client, string $url) : int
+    private function getResponse(Client $client, string $url): ResponseInterface
     {
-        /** @var \Psr\Http\Message\ResponseInterface $response */
-        $response = $client->request('GET', $url);
-        return $response->getStatusCode();
+        return $client->request(
+            'GET',
+            $url,
+            [
+                'allow_redirects' => [
+                    'track_redirects' => $this->trackRedirects
+                ]
+            ]
+        );
+    }
+
+    private function getDelay(): int
+    {
+        return (int)($this->input->getOption('delay') ?? $this->defaultDelay);
     }
 
     /**
-     * @return int
+     * @param array $output
+     * @param string $outputFile
+     * @throws CannotInsertRecord
      */
-    private function getDelay() : int
-    {
-        return (int) $this->input->getOption('delay') ?? $this->defaultDelay;
-    }
-
-    /**
-     * @param $output
-     * @param $outputFile
-     * @throws \League\Csv\CannotInsertRecord
-     */
-    private function writeOutputToFile($output, $outputFile)
+    private function writeOutputToFile(array $statusCodeResults, string $outputFile): void
     {
         $csv = Writer::createFromPath($outputFile, 'w');
         $csv->insertOne(['url', 'status_code']);
-        $csv->insertAll($output);
+        $csv->insertAll($statusCodeResults);
     }
 }
