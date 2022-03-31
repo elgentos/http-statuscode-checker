@@ -154,7 +154,17 @@ class CheckCommand extends Command
         $data = Parser::readSimple($file);
 
         $urls = [];
-        foreach ($data['url'] as $url) {
+        $key = false;
+        if (isset($data['url'])) {
+            $key = 'url';
+        }
+        if (isset($data['sitemap'])) {
+            $key = 'sitemap';
+        }
+        if (!$key) {
+            return [];
+        }
+        foreach ($data[$key] as $url) {
             $urls[] = $url['loc'];
         }
 
@@ -200,7 +210,9 @@ class CheckCommand extends Command
         $client = new Client(
             [
                 'http_errors' => false,
-                'delay' => $this->getDelay()]
+                'delay' => $this->getDelay(),
+                'verify' => false,
+            ]
         );
         $rows = [];
         foreach ($urls as $url) {
