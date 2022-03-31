@@ -28,7 +28,7 @@ class CheckCommand extends Command
              /_/                                                                                                           
                    by elgentos';
 
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.1.0';
     protected InputInterface $input;
     protected OutputInterface $output;
     protected string $name = 'check';
