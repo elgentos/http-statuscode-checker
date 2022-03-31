@@ -2,6 +2,9 @@
     "alias": "http-statuscode-checker.phar",
     "chmod": "0755",
     "compression": "GZ",
+    "compactors": [
+        "KevinGH\\Box\\Compactor\\Json"
+    ],
     "directories": [
         "src"
     ],
