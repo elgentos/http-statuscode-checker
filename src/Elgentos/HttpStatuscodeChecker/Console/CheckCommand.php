@@ -45,6 +45,7 @@ class CheckCommand extends Command
             ->setDescription($this->description)
             ->addOption('url-header', 'u', InputOption::VALUE_REQUIRED, 'Name of header in CSV file for URL', 'url')
             ->addOption('base-uri', 'b', InputOption::VALUE_REQUIRED, 'Set the base URI to be prepended for relative URLs')
+            ->addOption('user-agent', 'a', InputOption::VALUE_OPTIONAL, 'Set the user agent to be used for the requests')
             ->addOption('delay', 'd', InputOption::VALUE_REQUIRED, 'Delay between requests', 500)
             ->addOption('file-output', 'f', InputOption::VALUE_OPTIONAL, 'Write output to CSV file')
             ->addOption('track-redirects', 't', InputOption::VALUE_NONE, 'Flag to track intermediate 301/302 status codes in output too')
@@ -178,7 +179,7 @@ class CheckCommand extends Command
     private function prependBaseUri(string $url): string
     {
         $parsedUrl = parse_url($url);
-        return $this->input->getOption('base-uri') . $parsedUrl['path'];
+        return $this->input->getOption('base-uri') . $parsedUrl['path'] . ($parsedUrl['query'] ? '?' . $parsedUrl['query'] : null);
     }
 
     /**
@@ -210,6 +211,9 @@ class CheckCommand extends Command
     {
         $client = new Client(
             [
+                'headers' => [
+                    'user-agent' => $this->getUserAgent(),
+                ],
                 'http_errors' => false,
                 'delay' => $this->getDelay(),
                 'verify' => false,
@@ -269,5 +273,10 @@ class CheckCommand extends Command
         $csv = Writer::createFromPath($outputFile, 'w');
         $csv->insertOne(['url', 'status_code']);
         $csv->insertAll($statusCodeResults);
+    }
+
+    private function getUserAgent()
+    {
+        return $this->input->getOption('user-agent') ?? 'http-statuscode-checker ' . self::VERSION;
     }
 }
