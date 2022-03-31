@@ -76,7 +76,7 @@ class CheckCommand extends Command
 
         $fileType = $this->checkFileType($file);
 
-        $urls = match($fileType) {
+        $urls = match ($fileType) {
             'csv' => $this->getUrlsFromCsv($file),
             'xml' => $this->getUrlsFromXml($file),
         };
