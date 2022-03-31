@@ -177,7 +177,8 @@ class CheckCommand extends Command
      */
     private function prependBaseUri(string $url): string
     {
-        return $this->input->getOption('base-uri') . $url;
+        $parsedUrl = parse_url($url);
+        return $this->input->getOption('base-uri') . $parsedUrl['path'];
     }
 
     /**
