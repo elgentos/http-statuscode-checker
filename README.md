@@ -18,7 +18,7 @@ Arguments:
 
 Options:
   -u, --url-header=URL-HEADER      Name of header in CSV file for URL [default: "url"]
-  -b, --base-uri=BASE-URI          Set the base URI to be prepended for relative URLs
+  -b, --base-uri=BASE-URI          Set the base URI to be used (existing base URI will be replaced)
   -a, --user-agent[=USER-AGENT]    Set the user agent to be used for the requests
   -d, --delay=DELAY                Delay between requests [default: 500]
   -f, --file-output[=FILE-OUTPUT]  Write output to CSV file

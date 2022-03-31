@@ -44,7 +44,7 @@ class CheckCommand extends Command
             ->setName($this->name)
             ->setDescription($this->description)
             ->addOption('url-header', 'u', InputOption::VALUE_REQUIRED, 'Name of header in CSV file for URL', 'url')
-            ->addOption('base-uri', 'b', InputOption::VALUE_REQUIRED, 'Set the base URI to be prepended for relative URLs')
+            ->addOption('base-uri', 'b', InputOption::VALUE_REQUIRED, 'Set the base URI to be used (existing base URI will be replaced)')
             ->addOption('user-agent', 'a', InputOption::VALUE_OPTIONAL, 'Set the user agent to be used for the requests')
             ->addOption('delay', 'd', InputOption::VALUE_REQUIRED, 'Delay between requests', 500)
             ->addOption('file-output', 'f', InputOption::VALUE_OPTIONAL, 'Write output to CSV file')
