@@ -28,7 +28,7 @@ class CheckCommand extends Command
              /_/                                                                                                           
                    by elgentos';
 
-    public const VERSION = '1.1.1';
+    public const VERSION = '1.2.1';
     protected InputInterface $input;
     protected OutputInterface $output;
     protected string $name = 'check';
@@ -90,6 +90,18 @@ class CheckCommand extends Command
 
         $urls = array_filter($urls, [$this, 'validateUrl']);
 
+        // If file output is requested and the file already exists, skip URLs that have already been checked
+        $outputFile = $this->input->getOption('file-output');
+        if ($outputFile && file_exists($outputFile)) {
+            $existingUrls = $this->getUrlsFromOutputFile($outputFile);
+            if (!empty($existingUrls)) {
+                $beforeCount = count($urls);
+                $urls = array_values(array_diff($urls, $existingUrls));
+                $skipped = $beforeCount - count($urls);
+                $this->output->writeln(sprintf('<info>Skipping %d URLs already present in %s</info>', $skipped, $outputFile));
+            }
+        }
+
         $this->output->writeln(sprintf('<info>Processing %s URLs...</info>', count($urls)));
 
         $section = $output->section();
@@ -98,8 +110,8 @@ class CheckCommand extends Command
         $this->table->render();
 
         // Initialize CSV writer if file output is requested
-        if ($this->input->getOption('file-output')) {
-            $this->initializeCsvWriter($this->input->getOption('file-output'));
+        if ($outputFile) {
+            $this->initializeCsvWriter($outputFile, file_exists($outputFile));
         }
 
         $this->checkForStatusCodes($urls);
@@ -324,12 +336,39 @@ class CheckCommand extends Command
     /**
      * Initialize CSV writer and write headers
      * @param string $outputFile
+     * @param bool $append
      * @throws CannotInsertRecord
      */
-    private function initializeCsvWriter(string $outputFile): void
+    private function initializeCsvWriter(string $outputFile, bool $append = false): void
     {
-        $this->csvWriter = Writer::createFromPath($outputFile, 'w');
-        $this->csvWriter->insertOne(['url', 'status_code']);
+        if ($append) {
+            $this->csvWriter = Writer::createFromPath($outputFile, 'a');
+        } else {
+            $this->csvWriter = Writer::createFromPath($outputFile, 'w');
+            $this->csvWriter->insertOne(['url', 'status_code']);
+        }
+    }
+
+    /**
+     * Read URLs already present in the output CSV file
+     * @param string $outputFile
+     * @return array
+     */
+    private function getUrlsFromOutputFile(string $outputFile): array
+    {
+        try {
+            $csv = Reader::createFromPath($outputFile);
+            $csv->setHeaderOffset(0);
+            $urls = [];
+            foreach ($csv as $record) {
+                if (isset($record['url'])) {
+                    $urls[] = $record['url'];
+                }
+            }
+            return $urls;
+        } catch (\Exception $e) {
+            return [];
+        }
     }
 
     private function getUserAgent()
