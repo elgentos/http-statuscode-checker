@@ -1,6 +1,5 @@
 {
     "alias": "http-statuscode-checker.phar",
-    "chmod": "0755",
     "compression": "GZ",
     "compactors": [
         "KevinGH\\Box\\Compactor\\Json"
@@ -19,6 +18,10 @@
                 "Tests"
             ],
             "in": "vendor"
+        },
+        {
+            "name": ["*.bash", "*.zsh", "*.fish"],
+            "in": "vendor/symfony/console/Resources"
         }
     ],
     "main": "bin/http-statuscode-checker",

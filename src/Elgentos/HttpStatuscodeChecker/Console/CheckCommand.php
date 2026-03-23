@@ -37,6 +37,7 @@ class CheckCommand extends Command
     protected int $defaultDelay = 500;
     protected bool $trackRedirects;
     protected Table $table;
+    protected ?Writer $csvWriter = null;
 
     protected function configure(): void
     {
@@ -96,10 +97,12 @@ class CheckCommand extends Command
         $this->table->setHeaders(['URL', 'Status Code']);
         $this->table->render();
 
-        $statusCodeResults = $this->checkForStatusCodes($urls);
+        // Initialize CSV writer if file output is requested
         if ($this->input->getOption('file-output')) {
-            $this->writeOutputToFile($statusCodeResults, $this->input->getOption('file-output'));
+            $this->initializeCsvWriter($this->input->getOption('file-output'));
         }
+
+        $this->checkForStatusCodes($urls);
 
         $this->output->writeln('Done.');
 
@@ -154,19 +157,63 @@ class CheckCommand extends Command
     {
         $data = Parser::readSimple($file);
 
-        $urls = [];
-        $key = false;
         if (isset($data['url'])) {
-            $key = 'url';
+            $urls = [];
+            foreach ($data['url'] as $url) {
+                $urls[] = $url['loc'];
+            }
+            return $urls;
         }
+
         if (isset($data['sitemap'])) {
-            $key = 'sitemap';
+            $this->output->writeln(sprintf('<info>Found sitemap index with %d sub-sitemaps, fetching...</info>', count($data['sitemap'])));
+            $urls = [];
+            $client = new Client([
+                'headers' => ['user-agent' => $this->getUserAgent()],
+                'http_errors' => false,
+                'verify' => false,
+            ]);
+            foreach ($data['sitemap'] as $sitemap) {
+                $sitemapUrl = $sitemap['loc'];
+                $this->output->writeln(sprintf('<info>Fetching sub-sitemap: %s</info>', $sitemapUrl));
+                try {
+                    usleep($this->getDelay() * 1000);
+                    $response = $client->request('GET', $sitemapUrl);
+                    if ($response->getStatusCode() === 200) {
+                        $urls = array_merge($urls, $this->getUrlsFromXmlString($response->getBody()->getContents()));
+                    } else {
+                        $this->output->writeln(sprintf('<error>Failed to fetch %s (HTTP %d)</error>', $sitemapUrl, $response->getStatusCode()));
+                    }
+                } catch (\Exception $e) {
+                    $this->output->writeln(sprintf('<error>Failed to fetch %s: %s</error>', $sitemapUrl, $e->getMessage()));
+                }
+            }
+            return $urls;
         }
-        if (!$key) {
+
+        return [];
+    }
+
+    private function getUrlsFromXmlString(string $xmlContent): array
+    {
+        $xml = simplexml_load_string($xmlContent);
+        if ($xml === false) {
             return [];
         }
-        foreach ($data[$key] as $url) {
-            $urls[] = $url['loc'];
+
+        $xml->registerXPathNamespace('sm', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+        $urls = [];
+
+        // Handle regular sitemap with <url> entries
+        foreach ($xml->xpath('//sm:url/sm:loc') as $loc) {
+            $urls[] = (string) $loc;
+        }
+
+        // Handle sitemap index with <sitemap> entries (nested index)
+        if (empty($urls)) {
+            foreach ($xml->xpath('//sm:sitemap/sm:loc') as $loc) {
+                $urls[] = (string) $loc;
+            }
         }
 
         return $urls;
@@ -179,7 +226,8 @@ class CheckCommand extends Command
     private function prependBaseUri(string $url): string
     {
         $parsedUrl = parse_url($url);
-        return $this->input->getOption('base-uri') . $parsedUrl['path'] . (isset($parsedUrl['query']) ? '?' . $parsedUrl['query'] : null);
+        $baseUri = rtrim($this->input->getOption('base-uri'), '/');
+        return $baseUri . $parsedUrl['path'] . (isset($parsedUrl['query']) ? '?' . $parsedUrl['query'] : null);
     }
 
     /**
@@ -226,7 +274,12 @@ class CheckCommand extends Command
                 $statusCode = $response->getStatusCode();
                 foreach ($response->getHeader('X-Guzzle-Redirect-History') as $index => $redirectHistoryUrl) {
                     $redirectHistoryStatusCode = $response->getHeader('X-Guzzle-Redirect-Status-History')[$index];
-                    $this->table->appendRow([$redirectHistoryUrl, $redirectHistoryStatusCode]);
+                    $redirectRow = [$redirectHistoryUrl, $redirectHistoryStatusCode];
+                    $this->table->appendRow($redirectRow);
+                    // Write redirect row to CSV immediately if file output is enabled
+                    if ($this->csvWriter) {
+                        $this->csvWriter->insertOne($redirectRow);
+                    }
                 }
             } catch (TooManyRedirectsException $e) {
                 $statusCode = 'Redirect loop';
@@ -234,6 +287,11 @@ class CheckCommand extends Command
             $row = [$url, $statusCode];
             $this->table->appendRow($row);
             $rows[] = $row;
+
+            // Write main row to CSV immediately if file output is enabled
+            if ($this->csvWriter) {
+                $this->csvWriter->insertOne($row);
+            }
         }
 
         return $rows;
@@ -264,15 +322,14 @@ class CheckCommand extends Command
     }
 
     /**
-     * @param array $output
+     * Initialize CSV writer and write headers
      * @param string $outputFile
      * @throws CannotInsertRecord
      */
-    private function writeOutputToFile(array $statusCodeResults, string $outputFile): void
+    private function initializeCsvWriter(string $outputFile): void
     {
-        $csv = Writer::createFromPath($outputFile, 'w');
-        $csv->insertOne(['url', 'status_code']);
-        $csv->insertAll($statusCodeResults);
+        $this->csvWriter = Writer::createFromPath($outputFile, 'w');
+        $this->csvWriter->insertOne(['url', 'status_code']);
     }
 
     private function getUserAgent()
