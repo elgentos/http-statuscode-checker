@@ -3,8 +3,8 @@
 namespace Elgentos\HttpStatuscodeChecker\Console;
 
 use Elgentos\Parser;
-use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
+use GuzzleHttp\Pool;
 use League\Csv\CannotInsertRecord;
 use League\Csv\Exception;
 use League\Csv\Writer;
@@ -14,7 +14,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use League\Csv\Reader;
-use Symfony\Component\Console\Helper\Table;
+use Symfony\Component\Console\Helper\ProgressBar;
 use GuzzleHttp\Client;
 
 class CheckCommand extends Command
@@ -34,9 +34,10 @@ class CheckCommand extends Command
     protected string $name = 'check';
     protected string $description = 'Run checker on a list of URLs';
     protected array $supportedFileTypes = ['csv', 'xml'];
-    protected int $defaultDelay = 500;
+    protected int $defaultDelay = 0;
+    protected int $defaultConcurrency = 10;
     protected bool $trackRedirects;
-    protected Table $table;
+    protected ?ProgressBar $progressBar = null;
     protected ?Writer $csvWriter = null;
 
     protected function configure(): void
@@ -47,14 +48,14 @@ class CheckCommand extends Command
             ->addOption('url-header', 'u', InputOption::VALUE_REQUIRED, 'Name of header in CSV file for URL', 'url')
             ->addOption('base-uri', 'b', InputOption::VALUE_REQUIRED, 'Set the base URI to be used (existing base URI will be replaced)')
             ->addOption('user-agent', 'a', InputOption::VALUE_OPTIONAL, 'Set the user agent to be used for the requests')
-            ->addOption('delay', 'd', InputOption::VALUE_REQUIRED, 'Delay between requests', 500)
+            ->addOption('concurrency', 'c', InputOption::VALUE_REQUIRED, 'Number of concurrent requests', 10)
+            ->addOption('delay', 'd', InputOption::VALUE_REQUIRED, 'Delay between requests in ms', 0)
             ->addOption('file-output', 'f', InputOption::VALUE_OPTIONAL, 'Write output to CSV file')
             ->addOption('track-redirects', 't', InputOption::VALUE_NONE, 'Flag to track intermediate 301/302 status codes in output too')
             ->addArgument('file', InputOption::VALUE_REQUIRED, 'Filename to parse for URLs');
     }
 
     /**
-     * @throws GuzzleException
      * @throws Exception
      * @throws \Exception
      */
@@ -102,12 +103,18 @@ class CheckCommand extends Command
             }
         }
 
-        $this->output->writeln(sprintf('<info>Processing %s URLs...</info>', count($urls)));
+        $urlCount = count($urls);
+        $this->output->writeln(sprintf('<info>Processing %s URLs...</info>', $urlCount));
 
-        $section = $output->section();
-        $this->table = new Table($section);
-        $this->table->setHeaders(['URL', 'Status Code']);
-        $this->table->render();
+        // Progress bar overwrites itself on the last line of output
+        $this->progressBar = new ProgressBar($output, $urlCount);
+        $this->progressBar->setFormat(" %current%/%max% [%bar%] %percent:3s%% %elapsed:8s% / %estimated:-8s% %memory:6s%");
+        $this->progressBar->start();
+
+        // Table header printed once, rows stream below without redrawing
+        $this->output->writeln('');
+        $this->output->writeln(str_pad('URL', 80) . ' Status Code');
+        $this->output->writeln(str_repeat('-', 92));
 
         // Initialize CSV writer if file output is requested
         if ($outputFile) {
@@ -116,6 +123,8 @@ class CheckCommand extends Command
 
         $this->checkForStatusCodes($urls);
 
+        $this->progressBar->finish();
+        $this->output->writeln('');
         $this->output->writeln('Done.');
 
         return 0;
@@ -262,75 +271,83 @@ class CheckCommand extends Command
         return true;
     }
 
-    /**
-     * @param array $urls
-     * @return array
-     * @throws GuzzleException
-     */
     private function checkForStatusCodes(array $urls): array
     {
-        $client = new Client(
-            [
-                'headers' => [
-                    'user-agent' => $this->getUserAgent(),
-                ],
-                'http_errors' => false,
-                'delay' => $this->getDelay(),
-                'verify' => false,
-            ]
-        );
+        $client = new Client([
+            'headers' => ['user-agent' => $this->getUserAgent()],
+            'http_errors' => false,
+            'delay' => $this->getDelay(),
+            'verify' => false,
+        ]);
+
         $rows = [];
-        foreach ($urls as $url) {
-            try {
-                $response = $this->getResponse($client, $url);
+        $requestOptions = [
+            'allow_redirects' => ['track_redirects' => $this->trackRedirects],
+        ];
+
+        $requests = function () use ($client, $urls, $requestOptions) {
+            foreach ($urls as $index => $url) {
+                yield $index => fn() => $client->sendAsync(
+                    new \GuzzleHttp\Psr7\Request('GET', $url),
+                    $requestOptions
+                );
+            }
+        };
+
+        $pool = new Pool($client, $requests(), [
+            'concurrency' => $this->getConcurrency(),
+            'fulfilled' => function (ResponseInterface $response, int $index) use ($urls, &$rows) {
+                $url = $urls[$index];
                 $statusCode = $response->getStatusCode();
-                foreach ($response->getHeader('X-Guzzle-Redirect-History') as $index => $redirectHistoryUrl) {
-                    $redirectHistoryStatusCode = $response->getHeader('X-Guzzle-Redirect-Status-History')[$index];
+
+                foreach ($response->getHeader('X-Guzzle-Redirect-History') as $i => $redirectHistoryUrl) {
+                    $redirectHistoryStatusCode = $response->getHeader('X-Guzzle-Redirect-Status-History')[$i];
                     $redirectRow = [$redirectHistoryUrl, $redirectHistoryStatusCode];
-                    $this->table->appendRow($redirectRow);
-                    // Write redirect row to CSV immediately if file output is enabled
+                    $this->writeResultRow($redirectHistoryUrl, $redirectHistoryStatusCode);
                     if ($this->csvWriter) {
                         $this->csvWriter->insertOne($redirectRow);
                     }
                 }
-            } catch (TooManyRedirectsException $e) {
-                $statusCode = 'Redirect loop';
-            }
-            $row = [$url, $statusCode];
-            $this->table->appendRow($row);
-            $rows[] = $row;
 
-            // Write main row to CSV immediately if file output is enabled
-            if ($this->csvWriter) {
-                $this->csvWriter->insertOne($row);
-            }
-        }
+                $row = [$url, $statusCode];
+                $this->writeResultRow($url, $statusCode);
+                $rows[] = $row;
+
+                if ($this->csvWriter) {
+                    $this->csvWriter->insertOne($row);
+                }
+
+                $this->progressBar?->advance();
+            },
+            'rejected' => function (\Exception $e, int $index) use ($urls, &$rows) {
+                $url = $urls[$index];
+                $statusCode = $e instanceof TooManyRedirectsException ? 'Redirect loop' : 'Error: ' . $e->getMessage();
+
+                $row = [$url, $statusCode];
+                $this->writeResultRow($url, $statusCode);
+                $rows[] = $row;
+
+                if ($this->csvWriter) {
+                    $this->csvWriter->insertOne($row);
+                }
+
+                $this->progressBar?->advance();
+            },
+        ]);
+
+        $pool->promise()->wait();
 
         return $rows;
-    }
-
-    /**
-     * @param Client $client
-     * @param string $url
-     * @return ResponseInterface
-     * @throws GuzzleException
-     */
-    private function getResponse(Client $client, string $url): ResponseInterface
-    {
-        return $client->request(
-            'GET',
-            $url,
-            [
-                'allow_redirects' => [
-                    'track_redirects' => $this->trackRedirects
-                ]
-            ]
-        );
     }
 
     private function getDelay(): int
     {
         return (int)($this->input->getOption('delay') ?? $this->defaultDelay);
+    }
+
+    private function getConcurrency(): int
+    {
+        return (int)($this->input->getOption('concurrency') ?? $this->defaultConcurrency);
     }
 
     /**
@@ -369,6 +386,14 @@ class CheckCommand extends Command
         } catch (\Exception $e) {
             return [];
         }
+    }
+
+    private function writeResultRow(string $url, string|int $statusCode): void
+    {
+        $this->progressBar?->clear();
+        $truncatedUrl = strlen($url) > 78 ? substr($url, 0, 75) . '...' : $url;
+        $this->output->writeln(str_pad($truncatedUrl, 80) . ' ' . $statusCode);
+        $this->progressBar?->display();
     }
 
     private function getUserAgent()
